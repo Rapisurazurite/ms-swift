@@ -44,6 +44,9 @@ def get_mcore_model_config(args, hf_config):
         if value is None or isinstance(value, (list, tuple)) and len(value) == 0:
             continue
         kwargs[key] = value
+    if kwargs.get('cross_entropy_fusion_impl') == 'liger':
+        # Megatron only dispatches 'native' and 'te'; liger is rebound behind 'native' (see _patch_liger_cross_entropy).
+        kwargs['cross_entropy_fusion_impl'] = 'native'
 
     if args.task_type == 'seq_cls':
         args.problem_type = args.problem_type or getattr(hf_config, 'problem_type', None)

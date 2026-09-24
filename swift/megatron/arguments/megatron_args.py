@@ -494,7 +494,7 @@ class MegatronArguments(RLHFMegatronArgumentsMixin, MegatronTunerMixin):
     apply_rope_fusion: bool = False
     gradient_accumulation_fusion: bool = True
     cross_entropy_loss_fusion: bool = True
-    cross_entropy_fusion_impl: Literal['native', 'te'] = 'native'
+    cross_entropy_fusion_impl: Literal['native', 'te', 'liger'] = 'native'
     calculate_per_token_loss: Optional[bool] = None
     attention_backend: str = 'flash'  # flash, fused, unfused, local, auto
     optimizer: Literal['adam', 'sgd', 'muon', 'dist_muon'] = 'adam'
@@ -817,6 +817,19 @@ class MegatronArguments(RLHFMegatronArgumentsMixin, MegatronTunerMixin):
                              '--recompute_granularity full (recommended, largest memory saving) or none, or '
                              'switch to tuner_type="full" to keep selective recomputation.')
 
+    def _init_liger_cross_entropy(self):
+        if self.cross_entropy_fusion_impl != 'liger':
+            return
+        if not is_torch_npu_available():
+            raise ValueError('cross_entropy_fusion_impl="liger" only supports Ascend NPU. On CUDA, use "te".')
+        if not self.cross_entropy_loss_fusion:
+            raise ValueError('cross_entropy_fusion_impl="liger" requires cross_entropy_loss_fusion=True.')
+        if self.bridge_backend != 'mcore-bridge':
+            raise ValueError('cross_entropy_fusion_impl="liger" requires bridge_backend="mcore-bridge".')
+        require_version('liger-kernel>=0.8.2', 'Please install liger-kernel via `pip install liger-kernel -U`')
+        from swift.megatron.init import _patch_liger_cross_entropy
+        _patch_liger_cross_entropy()
+
     def __post_init__(self):
         if self.tuner_type != 'full':
             require_version('peft>=0.15', 'Please install peft>=0.15 to use LoRA in Megatron-SWIFT.')
@@ -824,6 +837,7 @@ class MegatronArguments(RLHFMegatronArgumentsMixin, MegatronTunerMixin):
         MegatronTunerMixin.__post_init__(self)
         os.environ.setdefault('CUDA_DEVICE_MAX_CONNECTIONS', '1')
         self._check_bridge_backend()
+        self._init_liger_cross_entropy()
         if self.recompute_granularity == 'none':
             self.recompute_granularity = None
         if self.recompute_granularity == 'selective' and self.recompute_method is not None:

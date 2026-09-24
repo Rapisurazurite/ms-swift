@@ -66,7 +66,7 @@ For base environment setup, see the [Ascend PyTorch installation guide](https://
 | RLHF            | GRPO                  | Supported     |
 |                 | PPO                   | Supported     |
 | Optimization    | FA and other fused ops | Supported    |
-|                 | Liger-Kernel          | Not supported |
+|                 | Liger-Kernel          | Partially supported (Megatron `--cross_entropy_fusion_impl liger`) |
 | Deployment      | PT                    | Supported     |
 |                 | vLLM                  | Supported     |
 |                 | SGLang                | Not supported |
