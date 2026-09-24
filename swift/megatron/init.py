@@ -347,6 +347,25 @@ def _patch_mcore_bridge():
     GPTBridge.save_weights = save_weights
 
 
+def _patch_liger_cross_entropy():
+    """Serve `cross_entropy_fusion_impl='liger'` through Megatron's 'native' call site.
+
+    `LanguageModule` imports `fused_vocab_parallel_cross_entropy` by name, so it has to be rebound in
+    `language_module` itself; patching `megatron.core.fusions` would not reach the caller. Only TP=1 is
+    supported (checked in `MegatronArguments`), so the local logits cover the full vocabulary.
+    """
+    from liger_kernel.transformers.functional import liger_cross_entropy
+    from megatron.core.models.common.language_module import language_module
+
+    def liger_vocab_parallel_cross_entropy(vocab_parallel_logits, target, tp_group=None):
+        s, b, v = vocab_parallel_logits.shape
+        loss = liger_cross_entropy(vocab_parallel_logits.view(-1, v), target.view(-1), reduction='none')
+        # liger returns the loss in the logits' dtype; Megatron's native and TE implementations return fp32.
+        return loss.view(s, b).float()
+
+    language_module.fused_vocab_parallel_cross_entropy = liger_vocab_parallel_cross_entropy
+
+
 def init_megatron_env():
     os.environ.pop('VLLM_USE_MODELSCOPE', None)
     logging_level = logging.root.level

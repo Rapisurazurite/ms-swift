@@ -65,7 +65,7 @@ vLLM-Ascend 需要与 CANN、torch 和 torch_npu 按整套兼容矩阵安装，�
 | RLHF     | GRPO                | 已支持   |
 |          | PPO                 | 已支持   |
 | 性能优化 | FA 等融合算子        | 已支持    |
-|          | Liger-Kernel        | 暂不支持 |
+|          | Liger-Kernel        | 部分支持（Megatron `--cross_entropy_fusion_impl liger`） |
 | 部署     | PT                  | 已支持   |
 |          | vLLM                | 已支持   |
 |          | SGLang              | 暂不支持 |
