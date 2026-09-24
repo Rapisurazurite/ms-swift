@@ -360,31 +360,73 @@ def _patch_liger_cross_entropy():
     is imported, so liger's `infer_device()` returns 'cuda': it keeps its CUDA kernels and a block size of
     32768, which the Ascend compiler rejects.
 
-    The 2-D kernel computes the loss in fp32 but stores it in a buffer of the logits' dtype, so bf16 logits
-    would give a bf16-rounded loss. Its `cross_entropy_forward` is recompiled with an fp32 buffer, so the loss
-    matches Megatron's native implementation and liger's vocab-parallel kernel. Gradients do not read that
-    buffer.
+    The 2-D kernel computes the loss in fp32, but liger's `cross_entropy_forward` stores it in a buffer of the
+    logits' dtype, so bf16 logits would give a bf16-rounded loss. The kernel is launched here instead, with an
+    fp32 loss buffer and the launch config liger uses for bf16 logits, so the loss matches Megatron's native
+    implementation and liger's vocab-parallel kernel. The backward is liger's.
     """
     import liger_kernel.ops.vocab_parallel_cross_entropy as liger_vocab_parallel
     from liger_kernel.megatron import LigerMegatronCrossEntropy
     from liger_kernel.ops.backends._ascend.ops import cross_entropy as liger_ce
     from megatron.core.models.common.language_module import language_module
     liger_vocab_parallel.MAX_FUSED_SIZE = 2048  # liger's own value for 'npu'
-    src = inspect.getsource(liger_ce.cross_entropy_forward)
-    start = src.index('    loss_1d = ')
-    end = src.index('\n    z_loss_1d = ', start)
-    src = src[:start] + src[start:end].replace('dtype=_input.dtype', 'dtype=torch.float32') + src[end:]
-    exec(compile(src, liger_ce.__file__, 'exec'), liger_ce.__dict__)
     vocab_parallel_cross_entropy = LigerMegatronCrossEntropy()
+
+    class LigerCrossEntropy(torch.autograd.Function):
+
+        @staticmethod
+        def forward(ctx, logits, target):
+            n_rows, v = logits.shape
+            loss = torch.zeros(n_rows, dtype=torch.float32, device=logits.device)  # ignored rows are not written
+            lse = torch.empty_like(loss)
+            # [inv_n, inv_sum_weight, weight_sum]; reduction='none' without weight reads only inv_n
+            ce_stats = torch.ones(3, dtype=torch.float32, device=logits.device)
+            liger_ce.liger_cross_entropy_forward_kernel[(min(liger_ce.get_npu_core_count(), n_rows), )](
+                X_ptr=logits,
+                X_stride=logits.stride(-2),
+                Y_ptr=target,
+                weight_ptr=None,
+                loss_ptr=loss,
+                z_loss_ptr=None,
+                lse_ptr=lse,
+                token_accuracy_ptr=None,
+                token_accuracy_stride=0,
+                predicted_tokens_ptr=None,
+                predicted_tokens_stride=0,
+                n_cols=v,
+                n_rows=n_rows,
+                ce_stats_ptr=ce_stats,
+                ignore_index=-100,
+                ls_eps=0.0,
+                lse_square_scale=0.0,
+                label_smoothing=0.0,
+                reduction='none',
+                softcap=None,
+                RETURN_Z_LOSS=False,
+                RETURN_LSE=True,
+                RETURN_TOKEN_ACCURACY=False,
+                RETURN_PREDICTED_TOKENS=False,
+                BLOCK_SIZE=liger_ce.get_optimal_block_size(v, has_gradients=False),
+                HAS_WEIGHT=False,
+                HAS_SOFTCAPPING=False,
+            )
+            ctx.save_for_backward(logits, target, lse, ce_stats)
+            return loss
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            logits, target, lse, ce_stats = ctx.saved_tensors
+            # (input, target, weight, lse, grad_output, ignore_index, lse_square_scale, label_smoothing, reduction,
+            #  softcap, ce_stats)
+            grad_input = liger_ce.cross_entropy_backward(logits, target, None, lse, grad_output, -100, 0.0, 0.0, 'none',
+                                                         None, ce_stats)
+            return grad_input, None
 
     def liger_vocab_parallel_cross_entropy(vocab_parallel_logits, target, tp_group=None):
         if tp_group is not None and tp_group.size() > 1:
             return vocab_parallel_cross_entropy(vocab_parallel_logits, target, tp_group=tp_group)
         s, b, v = vocab_parallel_logits.shape
-        # (input, target, weight, ignore_index, lse_square_scale, label_smoothing, reduction)
-        loss = liger_ce.LigerCrossEntropyFunction.apply(
-            vocab_parallel_logits.view(-1, v), target.view(-1), None, -100, 0.0, 0.0, 'none')[0]
-        return loss.view(s, b)
+        return LigerCrossEntropy.apply(vocab_parallel_logits.view(-1, v), target.view(-1)).view(s, b)
 
     language_module.fused_vocab_parallel_cross_entropy = liger_vocab_parallel_cross_entropy
 
