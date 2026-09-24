@@ -348,20 +348,43 @@ def _patch_mcore_bridge():
 
 
 def _patch_liger_cross_entropy():
-    """Serve `cross_entropy_fusion_impl='liger'` through Megatron's 'native' call site.
+    """Serve `cross_entropy_fusion_impl='liger'` on Ascend NPU through Megatron's 'native' call site.
 
     `LanguageModule` imports `fused_vocab_parallel_cross_entropy` by name, so it has to be rebound in
-    `language_module` itself; patching `megatron.core.fusions` would not reach the caller. Only TP=1 is
-    supported (checked in `MegatronArguments`), so the local logits cover the full vocabulary.
+    `language_module` itself; patching `megatron.core.fusions` would not reach the caller.
+
+    With TP>1 this uses liger's vocab-parallel kernel. With TP=1 the local logits cover the full vocabulary,
+    and liger's Ascend 2-D kernel is several times faster.
+
+    The kernels are picked here instead of by liger. MindSpeed maps `torch.cuda` to `torch_npu` before liger
+    is imported, so liger's `infer_device()` returns 'cuda': it keeps its CUDA kernels and a block size of
+    32768, which the Ascend compiler rejects.
+
+    The 2-D kernel computes the loss in fp32 but stores it in a buffer of the logits' dtype, so bf16 logits
+    would give a bf16-rounded loss. Its `cross_entropy_forward` is recompiled with an fp32 buffer, so the loss
+    matches Megatron's native implementation and liger's vocab-parallel kernel. Gradients do not read that
+    buffer.
     """
-    from liger_kernel.transformers.functional import liger_cross_entropy
+    import liger_kernel.ops.vocab_parallel_cross_entropy as liger_vocab_parallel
+    from liger_kernel.megatron import LigerMegatronCrossEntropy
+    from liger_kernel.ops.backends._ascend.ops import cross_entropy as liger_ce
     from megatron.core.models.common.language_module import language_module
+    liger_vocab_parallel.MAX_FUSED_SIZE = 2048  # liger's own value for 'npu'
+    src = inspect.getsource(liger_ce.cross_entropy_forward)
+    start = src.index('    loss_1d = ')
+    end = src.index('\n    z_loss_1d = ', start)
+    src = src[:start] + src[start:end].replace('dtype=_input.dtype', 'dtype=torch.float32') + src[end:]
+    exec(compile(src, liger_ce.__file__, 'exec'), liger_ce.__dict__)
+    vocab_parallel_cross_entropy = LigerMegatronCrossEntropy()
 
     def liger_vocab_parallel_cross_entropy(vocab_parallel_logits, target, tp_group=None):
+        if tp_group is not None and tp_group.size() > 1:
+            return vocab_parallel_cross_entropy(vocab_parallel_logits, target, tp_group=tp_group)
         s, b, v = vocab_parallel_logits.shape
-        loss = liger_cross_entropy(vocab_parallel_logits.view(-1, v), target.view(-1), reduction='none')
-        # liger returns the loss in the logits' dtype; Megatron's native and TE implementations return fp32.
-        return loss.view(s, b).float()
+        # (input, target, weight, ignore_index, lse_square_scale, label_smoothing, reduction)
+        loss = liger_ce.LigerCrossEntropyFunction.apply(
+            vocab_parallel_logits.view(-1, v), target.view(-1), None, -100, 0.0, 0.0, 'none')[0]
+        return loss.view(s, b)
 
     language_module.fused_vocab_parallel_cross_entropy = liger_vocab_parallel_cross_entropy
 

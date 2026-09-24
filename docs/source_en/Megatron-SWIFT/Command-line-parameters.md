@@ -28,7 +28,7 @@
 - apply_rope_fusion: Defaults to False. Used to enable RoPE fusion. This parameter is passed through from megatron-core. Note: RoPE fusion is not supported in all cases, for example: MLA, mrope, etc. are not supported.
 - gradient_accumulation_fusion: Defaults to True. Used to enable gradient accumulation fusion.
 - 🔥cross_entropy_loss_fusion: Enables cross-entropy loss computation fusion. Defaults to True.
-- cross_entropy_fusion_impl: The implementation of cross-entropy loss fusion. Options are `'native'`, `'te'` and `'liger'`. Defaults to `'native'`. `'liger'` uses the Liger-Kernel cross-entropy kernel (requires `pip install liger-kernel`; only `tensor_model_parallel_size=1` is supported), which is useful where TE's cross-entropy is unavailable, such as Ascend NPU.
+- cross_entropy_fusion_impl: The implementation of cross-entropy loss fusion. Options are `'native'`, `'te'` and `'liger'`. Defaults to `'native'`. `'liger'` uses the Liger-Kernel cross-entropy kernel (requires `pip install liger-kernel`) and only supports Ascend NPU, where TE's cross-entropy is unavailable.
   - **The default value in `ms-swift>=4.3.1` has been changed from `'te'` to `'native'`**, for the reason see [this PR](https://github.com/NVIDIA/Megatron-LM/pull/5115). This may result in higher GPU memory usage.
 - calculate_per_token_loss: Scales the cross-entropy loss according to the number of non-padding tokens in the global batch. Defaults to None. When `task_type` is 'causal_lm' and during pretraining/fine-tuning, it defaults to True; otherwise, it defaults to False.
 - 🔥attention_backend: The attention backend to use (flash, fused, unfused, local, auto, flash_2, flash_3, flash_4). Defaults to `flash`.

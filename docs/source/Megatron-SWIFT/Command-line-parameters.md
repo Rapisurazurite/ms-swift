@@ -26,7 +26,7 @@
 - apply_rope_fusion: 默认为False。用于开启rope融合。该参数为megatron-core参数透传。注意：并不是所有情况都支持rope融合，例如：MLA、mrope等不支持。
 - gradient_accumulation_fusion: 默认为True。用于开启梯度累加融合。
 - 🔥cross_entropy_loss_fusion: 启动交叉熵损失计算融合。默认为True。
-- cross_entropy_fusion_impl: 交叉熵损失融合的实现。可选为'native'、'te'和'liger'。默认为'native'。'liger'使用Liger-Kernel的交叉熵kernel（需要`pip install liger-kernel`，仅支持`tensor_model_parallel_size=1`），适用于TE交叉熵不可用的环境，例如Ascend NPU。
+- cross_entropy_fusion_impl: 交叉熵损失融合的实现。可选为'native'、'te'和'liger'。默认为'native'。'liger'使用Liger-Kernel的交叉熵kernel（需要`pip install liger-kernel`），仅支持Ascend NPU（NPU上TE交叉熵不可用）。
   - **"ms-swift>=4.3.1"默认值从"te"修改为"native"**，原因查看[这个PR](https://github.com/NVIDIA/Megatron-LM/pull/5115)，这可能会导致更多的显存占用。
 - calculate_per_token_loss: 根据全局批次中的非填充token数量来对交叉熵损失进行缩放。默认为None，`task_type`为'causal_lm'且为预训练/微调时，默认为True，否则默认为False。
 - 🔥attention_backend: 使用的注意力后端 (flash、fused、unfused、local、auto、flash_2、flash_3、flash_4)。默认为 flash。

@@ -820,10 +820,10 @@ class MegatronArguments(RLHFMegatronArgumentsMixin, MegatronTunerMixin):
     def _init_liger_cross_entropy(self):
         if self.cross_entropy_fusion_impl != 'liger':
             return
+        if not is_torch_npu_available():
+            raise ValueError('cross_entropy_fusion_impl="liger" only supports Ascend NPU. On CUDA, use "te".')
         if not self.cross_entropy_loss_fusion:
             raise ValueError('cross_entropy_fusion_impl="liger" requires cross_entropy_loss_fusion=True.')
-        if self.tensor_model_parallel_size > 1:
-            raise ValueError('cross_entropy_fusion_impl="liger" only supports tensor_model_parallel_size=1.')
         if self.bridge_backend != 'mcore-bridge':
             raise ValueError('cross_entropy_fusion_impl="liger" requires bridge_backend="mcore-bridge".')
         require_version('liger-kernel>=0.8.2', 'Please install liger-kernel via `pip install liger-kernel -U`')
